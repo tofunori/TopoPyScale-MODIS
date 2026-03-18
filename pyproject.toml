@@ -1,0 +1,56 @@
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "topopyscale-modis"
+dynamic = ["version", "description"]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    {name = "Thierry Laurent"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+dependencies = [
+    "numpy",
+    "pandas",
+    "xarray",
+    "h5netcdf",
+    "cdsapi",
+]
+
+[project.optional-dependencies]
+ingest = ["duckdb"]
+arco = ["gcsfs"]
+dev = [
+    "pytest",
+    "ruff",
+    "duckdb",
+]
+
+[project.urls]
+Homepage = "https://github.com/tofunori/TopoPyScale-MODIS"
+Issues = "https://github.com/tofunori/TopoPyScale-MODIS/issues"
+
+[project.scripts]
+era5-download = "topopyscale_modis.fetch_era5:main"
+era5-interpolate = "topopyscale_modis.toposcale:main"
+era5-partition = "topopyscale_modis.partition:main"
+era5-ingest = "topopyscale_modis.ingest:main"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
