@@ -2,7 +2,8 @@
 
 Implements the Fiddes & Gruber (2014) TopoSCALE method for interpolating ERA5
 pressure-level data to individual glacier pixel elevations, plus Jennings et al.
-(2018) rain/snow partitioning.
+(2018) rain/snow partitioning.  Inspired by TopoPyScale (Filhol, Fiddes &
+Aalstad, 2023; https://github.com/ArcticSnow/TopoPyScale).
 """
 
 __version__ = "0.1.0"

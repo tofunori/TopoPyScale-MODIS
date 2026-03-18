@@ -1,6 +1,6 @@
 # TopoPyScale-MODIS
 
-Lightweight [TopoSCALE](https://doi.org/10.5194/gmd-7-387-2014) downscaling for MODIS glacier pixels.
+Lightweight [TopoSCALE](https://doi.org/10.5194/gmd-7-387-2014) downscaling for MODIS glacier pixels, inspired by [TopoPyScale](https://github.com/ArcticSnow/TopoPyScale) (Filhol & Fiddes, 2023).
 
 Interpolates ERA5 pressure-level data (temperature, humidity, pressure) to individual glacier pixel elevations, then partitions precipitation into rain/snow using the [Jennings et al. (2018)](https://doi.org/10.1038/s41467-018-03629-7) logistic model.
 
@@ -99,6 +99,17 @@ If you use this package, please cite:
   pages={387--405},
   year={2014},
   doi={10.5194/gmd-7-387-2014}
+}
+
+@article{filhol2023topopyscale,
+  title={TopoPyScale: A Python Package for Hillslope Climate Downscaling},
+  author={Filhol, Simon and Fiddes, Joel and Aalstad, Kristoffer},
+  journal={Journal of Open Source Software},
+  volume={8},
+  number={86},
+  pages={5059},
+  year={2023},
+  doi={10.21105/joss.05059}
 }
 
 @article{jennings2018spatial,
