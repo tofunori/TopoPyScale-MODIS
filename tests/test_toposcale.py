@@ -1,9 +1,38 @@
 """Tests for topopyscale_modis.toposcale."""
 
-from topopyscale_modis.toposcale import interpolate_temperature, load_pixel_elevations
+import numpy as np
+import pandas as pd
+import pytest
+
+from topopyscale_modis.toposcale import (
+    _patch_weights_geographic,
+    interpolate_temperature,
+    load_pixel_elevations,
+)
 
 
 class TestToposcale:
+    def test_patch_weights_account_for_longitude_convergence(self):
+        longitudes = np.array([-100.5, -100.0, -99.5])
+
+        _, _, weights_equator = _patch_weights_geographic(
+            np.array([0.5, 0.0, -0.5]),
+            longitudes,
+            station_lat=0.0,
+            station_lon=-100.25,
+        )
+        _, _, weights_high_lat = _patch_weights_geographic(
+            np.array([60.5, 60.0, 59.5]),
+            longitudes,
+            station_lat=60.0,
+            station_lon=-100.25,
+        )
+
+        # At 60 N, the same longitude offset spans fewer metres than at the
+        # equator, so the same-latitude western neighbor should gain weight.
+        assert weights_high_lat[1, 1] > weights_equator[1, 1]
+        assert np.isclose(weights_high_lat.sum(), 1.0)
+
     def test_interpolation_temperature_range(self, era5_nc, test_db):
         pixels = load_pixel_elevations(test_db, "02-03")
         assert len(pixels) == 10
@@ -40,3 +69,18 @@ class TestToposcale:
 
         counts = result.groupby("pixel_id").size()
         assert (counts == 48).all(), f"Expected 48 records per pixel, got: {counts.unique()}"
+
+    def test_refuses_silent_extrapolation_above_profile(self, era5_nc):
+        pixels = pd.DataFrame(
+            [
+                {
+                    "pixel_id": 999,
+                    "elevation": 22000.0,
+                    "latitude": 52.0,
+                    "longitude": -118.0,
+                }
+            ]
+        )
+
+        with pytest.raises(ValueError, match="Refusing silent extrapolation above the pressure profile"):
+            interpolate_temperature(era5_nc, pixels)

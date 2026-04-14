@@ -19,8 +19,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from topopyscale_modis.config import G, normalize_region, validate_region
@@ -51,13 +53,47 @@ def load_pixel_elevations(db_path: Path, region: str) -> pd.DataFrame:
     return df
 
 
+def _patch_weights_geographic(
+    latitudes: np.ndarray,
+    longitudes: np.ndarray,
+    station_lat: float,
+    station_lon: float,
+) -> tuple[slice, slice, np.ndarray]:
+    """Return 3x3 IDW weights using approximate distances in metres.
+
+    TopoPyScale computes horizontal interpolation in projected x/y space. In this
+    stripped ERA5-only workflow we only have geographic coordinates, so we scale
+    longitude by cos(latitude) to avoid treating one degree of longitude like one
+    degree of latitude at high latitude.
+    """
+    lat_idx = int(np.argmin(np.abs(latitudes - station_lat)))
+    lon_idx = int(np.argmin(np.abs(longitudes - station_lon)))
+    lat_lo = max(0, lat_idx - 1)
+    lat_hi = min(len(latitudes) - 1, lat_idx + 1) + 1
+    lon_lo = max(0, lon_idx - 1)
+    lon_hi = min(len(longitudes) - 1, lon_idx + 1) + 1
+
+    patch_lats = latitudes[lat_lo:lat_hi]
+    patch_lons = longitudes[lon_lo:lon_hi]
+    lat_grid, lon_grid = np.meshgrid(patch_lats, patch_lons, indexing="ij")
+
+    meters_per_deg_lat = 111_320.0
+    meters_per_deg_lon = meters_per_deg_lat * max(math.cos(math.radians(float(station_lat))), 1e-6)
+    dy = (station_lat - lat_grid) * meters_per_deg_lat
+    dx = (station_lon - lon_grid) * meters_per_deg_lon
+    dist = np.sqrt(dx**2 + dy**2)
+    dist = np.maximum(dist, 1e-6)
+    idw = 1.0 / dist**2
+    weights = idw / idw.sum()
+    return slice(lat_lo, lat_hi), slice(lon_lo, lon_hi), weights
+
+
 def _process_pixel_chunk(args: tuple) -> list:
     """Process a subset of pixels -- called by multiprocessing workers.
 
     Each worker opens the NetCDF independently to avoid pickling issues.
     Returns a list of result dicts.
     """
-    import numpy as np
     import pandas as pd
     import xarray as xr
 
@@ -95,20 +131,16 @@ def _process_pixel_chunk(args: tuple) -> list:
 
         # IDW 3x3 patch (Fiddes & Gruber 2014) -- inverse-distance weighted
         # average of the 9 surrounding ERA5 grid cells.
-        lat_idx = int(np.argmin(np.abs(era5_lats - px_lat)))
-        lon_idx = int(np.argmin(np.abs(era5_lons - px_lon)))
-        lat_lo = max(0, lat_idx - 1)
-        lat_hi = min(len(era5_lats) - 1, lat_idx + 1) + 1  # +1 for slice
-        lon_lo = max(0, lon_idx - 1)
-        lon_hi = min(len(era5_lons) - 1, lon_idx + 1) + 1
-
-        patch_lats = era5_lats[lat_lo:lat_hi]
-        patch_lons = era5_lons[lon_lo:lon_hi]
-        lat_grid, lon_grid = np.meshgrid(patch_lats, patch_lons, indexing="ij")
-        dist = np.sqrt((px_lat - lat_grid) ** 2 + (px_lon - lon_grid) ** 2)
-        dist = np.maximum(dist, 1e-10)  # avoid div-by-zero at exact grid point
-        idw = 1.0 / dist ** 2
-        w = idw / idw.sum()  # shape [nlat, nlon]
+        lat_slice, lon_slice, w = _patch_weights_geographic(
+            era5_lats,
+            era5_lons,
+            float(px_lat),
+            float(px_lon),
+        )
+        lat_lo = lat_slice.start
+        lat_hi = lat_slice.stop
+        lon_lo = lon_slice.start
+        lon_hi = lon_slice.stop
 
         if cds_format:
             t_raw = ds[t_var][:, :, :, lat_lo:lat_hi, lon_lo:lon_hi].values
@@ -155,18 +187,13 @@ def _process_pixel_chunk(args: tuple) -> list:
                     p_interp = p_sorted[idx_above] * np.exp(
                         -(z_pixel - z_sorted[idx_above]) / (t_mean * R_d / g)
                     )
-            elif z_pixel >= z_sorted[-1]:
-                dz = z_sorted[-1] - z_sorted[-2]
-                dt_lev = t_sorted[-1] - t_sorted[-2]
-                lapse = (dt_lev / dz) * 1000 if dz > 0 else np.nan
-                t_interp = t_sorted[-1] + (dt_lev / dz) * (z_pixel - z_sorted[-1]) if dz > 0 else t_sorted[-1]
-                if has_humidity:
-                    q_interp = q_sorted[-1]  # clamp q at highest level
-                    # Log-linear pressure extrapolation
-                    if dz > 0:
-                        p_interp = p_sorted[-1] * np.exp(-g * (z_pixel - z_sorted[-1]) / (287.05 * t_interp))
-                    else:
-                        p_interp = p_sorted[-1]
+            elif z_pixel > z_sorted[-1]:
+                raise ValueError(
+                    "Pixel "
+                    f"{int(px['pixel_id'])} elevation {float(z_pixel):.1f} m exceeds the highest "
+                    f"available pressure-level altitude {float(z_sorted[-1]):.1f} m at {dt}. "
+                    "Refusing silent extrapolation above the pressure profile."
+                )
             else:
                 idx_above = int(np.searchsorted(z_sorted, z_pixel))
                 idx_below = idx_above - 1
@@ -238,7 +265,7 @@ def interpolate_temperature(
       4. For each time step, find the two pressure levels bracketing the pixel altitude
       5. Linearly interpolate T (and q if available) between those two levels
       6. If q available: compute P_pixel, Td, RH at pixel altitude
-      7. Handle below-surface case (pixel below lowest level) via clamping
+      7. Clamp the lower-bound case and fail explicitly above the profile top
 
     Args:
         workers: Number of parallel processes (default 1). Use --workers on Narval/HPC.
